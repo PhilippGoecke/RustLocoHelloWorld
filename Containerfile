@@ -27,7 +27,7 @@ WORKDIR /app
 
 # Install the loco and scaffold a minimal "hello world" app
 RUN cargo install loco \
-  && loco new --name hello_world --template lightweight-service --db sqlite --bg async --assets none
+  && loco new --name hello_world --db sqlite --bg async --assets none
 
 WORKDIR /app/hello_world
 
@@ -57,7 +57,7 @@ EOF
 # Pre-build dependencies to leverage Docker layer cache
 RUN cargo build --release
 
-# new stage for Rails app
+# new stage for Rust app
 FROM debian:trixie-slim as runtime
 
 # install dependencies
@@ -80,5 +80,8 @@ COPY --from=builder /app/hello_world/target/release/hello_world-cli /usr/local/b
 COPY --from=builder /app/hello_world/config ./config
 
 EXPOSE 5150
+
+ENV LOCO_ENV=production
+ENV LOCO_SERVER__BINDING=0.0.0.0
 
 CMD ["hello_world", "start"]
