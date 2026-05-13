@@ -31,8 +31,10 @@ RUN cargo install loco \
 
 WORKDIR /app/hello_world
 
-# Replace the default home controller with a "Hello World" / "Hello $name!" handler
-RUN cat > src/controllers/home.rs <<'EOF'
+RUN cargo loco generate controller welcome index
+
+# Replace the welcome controller with a "Hello World" / "Hello $name!" handler mounted at "/"
+RUN cat > src/controllers/welcome.rs <<'EOF'
 use loco_rs::prelude::*;
 use serde::Deserialize;
 
@@ -41,7 +43,7 @@ pub struct HelloParams {
     pub name: Option<String>,
 }
 
-async fn hello(Query(params): Query<HelloParams>) -> Result<Response> {
+async fn index(Query(params): Query<HelloParams>) -> Result<Response> {
     let body = match params.name {
         Some(name) if !name.is_empty() => format!("Hello {name}!"),
         _ => "Hello World".to_string(),
@@ -50,7 +52,7 @@ async fn hello(Query(params): Query<HelloParams>) -> Result<Response> {
 }
 
 pub fn routes() -> Routes {
-    Routes::new().add("/", get(hello))
+    Routes::new().add("/", get(index))
 }
 EOF
 
