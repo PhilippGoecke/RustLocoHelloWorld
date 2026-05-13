@@ -31,7 +31,7 @@ RUN cargo install loco \
 
 WORKDIR /app/hello_world
 
-RUN cargo loco generate controller welcome index
+RUN cargo loco generate controller welcome --kind api index
 
 # Replace the welcome controller with a "Hello World" / "Hello $name!" handler mounted at "/"
 RUN cat > src/controllers/welcome.rs <<'EOF'
