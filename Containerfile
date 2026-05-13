@@ -26,6 +26,29 @@ RUN cargo install loco-cli loco \
 
 WORKDIR /app/hello_world
 
+# Replace the default home controller with a "Hello World" / "Hello $name!" handler
+RUN cat > src/controllers/home.rs <<'EOF'
+use loco_rs::prelude::*;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+pub struct HelloParams {
+    pub name: Option<String>,
+}
+
+async fn hello(Query(params): Query<HelloParams>) -> Result<Response> {
+    let body = match params.name {
+        Some(name) if !name.is_empty() => format!("Hello {name}!"),
+        _ => "Hello World".to_string(),
+    };
+    format::text(&body)
+}
+
+pub fn routes() -> Routes {
+    Routes::new().add("/", get(hello))
+}
+EOF
+
 # Pre-build dependencies to leverage Docker layer cache
 RUN cargo build --release
 
