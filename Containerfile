@@ -81,7 +81,6 @@ COPY --from=builder /app/hello_world/config ./config
 
 EXPOSE 5150
 
-ENV LOCO_ENV=production
-ENV LOCO_SERVER__BINDING=0.0.0.0
+#ENV LOCO_ENV=production
 
-CMD ["hello_world", "start"]
+CMD ["hello_world", "start", "--binding", "0.0.0.0"]
