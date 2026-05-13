@@ -25,8 +25,8 @@ USER $USER
 
 WORKDIR /app
 
-# Install the loco CLI and scaffold a minimal "hello world" app
-RUN cargo install loco-cli \
+# Install the loco and scaffold a minimal "hello world" app
+RUN cargo install loco \
   && loco new --name hello_world --template lightweight-service --db sqlite --bg async --assets none
 
 WORKDIR /app/hello_world
