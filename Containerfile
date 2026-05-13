@@ -33,10 +33,17 @@ WORKDIR /app/hello_world
 
 RUN cargo loco generate controller welcome --kind api index
 
+# Capture the Rust and loco versions used to build this image
+RUN rustc --version | awk '{print $2}' > /app/hello_world/.rust_version \
+  && loco --version | awk '{print $2}' > /app/hello_world/.loco_version
+
 # Replace the welcome controller with a "Hello World" / "Hello $name!" handler mounted at "/"
 RUN cat > src/controllers/welcome.rs <<'EOF'
 use loco_rs::prelude::*;
 use serde::Deserialize;
+
+const RUST_VERSION: &str = include_str!("../../.rust_version");
+const LOCO_VERSION: &str = include_str!("../../.loco_version");
 
 #[derive(Debug, Deserialize)]
 pub struct HelloParams {
@@ -44,10 +51,15 @@ pub struct HelloParams {
 }
 
 async fn index(Query(params): Query<HelloParams>) -> Result<Response> {
-    let body = match params.name {
+    let greeting = match params.name {
         Some(name) if !name.is_empty() => format!("Hello {name}!"),
         _ => "Hello World".to_string(),
     };
+    let body = format!(
+        "{greeting}\nrust: {}\nloco: {}\n",
+        RUST_VERSION.trim(),
+        LOCO_VERSION.trim()
+    );
     format::text(&body)
 }
 
