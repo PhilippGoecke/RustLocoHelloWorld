@@ -1,0 +1,167 @@
+FROM debian:trixie-slim as builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# install rustup dependencies
+RUN apt update && apt upgrade -y \
+  # install dependencies
+  && apt install -y --no-install-recommends --no-install-suggests gcc libc6-dev curl ca-certificates pkg-config libssl-dev \
+  # install rustup
+  && apt install -y --no-install-recommends --no-install-suggests rustup \
+  && rm -rf "/var/lib/apt/lists/*" \
+  && rm -rf /var/cache/apt/archives
+
+# add user and set home directory
+ARG USER=rust
+RUN useradd --create-home --shell /bin/bash $USER
+ARG HOME="/home/$USER"
+WORKDIR $HOME
+USER $USER
+
+ENV PATH="$HOME/.cargo/bin:$PATH"
+
+RUN rustup default stable
+
+WORKDIR /app
+
+# Install the loco CLI and SeaORM CLI (used by loco for migrations/entities)
+RUN cargo install loco \
+  && cargo install sea-orm-cli
+
+# Scaffold a fully-featured Loco app:
+#   - SQLite database
+#   - async (in-process Tokio) background worker
+#   - no asset pipeline (API-first; we still showcase a static-served route below)
+RUN loco new --name hello_world --db sqlite --bg async --assets none
+
+WORKDIR /app/hello_world
+
+# ---------------------------------------------------------------------------
+# Showcase Loco generators: controllers, scaffolds, models, migrations,
+# tasks, workers, mailers, deployment, and data seeders.
+# ---------------------------------------------------------------------------
+
+# A plain API controller with multiple actions
+RUN cargo loco generate controller welcome --kind api index echo health
+
+# A full HTML+API scaffold (model + migration + controller + views)
+# Demonstrates: model generation, migrations, REST controller, validation
+RUN cargo loco generate scaffold post title:string content:text published:bool --kind api
+
+# A standalone model + migration (relations, indexes)
+RUN cargo loco generate model comment post:references content:text author:string
+
+# A background worker (async queue: in-process Tokio tasks)
+RUN cargo loco generate worker report_worker
+
+# A transactional mailer (templates under src/mailers/)
+RUN cargo loco generate mailer auth_mailer
+
+# A CLI task runnable via `cargo loco task <name>`
+RUN cargo loco generate task seed_demo_data
+
+# A data seeder (loaded via `cargo loco db seed`)
+RUN cargo loco generate data user || true
+
+# Deployment manifests (Dockerfile, nginx, shuttle, etc.) — generated for reference
+RUN cargo loco generate deployment --kind docker || true
+
+# Capture the Rust, cargo and loco versions used to build this image
+RUN rustc --version | awk '{print $2}' > /app/hello_world/.rust_version \
+  && cargo --version | awk '{print $2}' > /app/hello_world/.cargo_version \
+  && loco --version | awk '{print $2}' > /app/hello_world/.loco_version
+
+# Replace the welcome controller with a feature-rich showcase handler.
+# Demonstrates: Query extractors, JSON responses, text responses,
+# health/readiness endpoints, and embedding build-time version metadata.
+RUN cat > src/controllers/welcome.rs <<'EOF'
+use loco_rs::prelude::*;
+use serde::{Deserialize, Serialize};
+
+const RUST_VERSION: &str = include_str!("../../.rust_version");
+const CARGO_VERSION: &str = include_str!("../../.cargo_version");
+const LOCO_VERSION: &str = include_str!("../../.loco_version");
+
+#[derive(Debug, Deserialize)]
+pub struct HelloParams {
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HelloJson {
+    pub greeting: String,
+    pub rust: &'static str,
+    pub cargo: &'static str,
+    pub loco: &'static str,
+}
+
+async fn index(Query(params): Query<HelloParams>) -> Result<Response> {
+    let greeting = match params.name {
+        Some(name) if !name.is_empty() => format!("Hello {name}!"),
+        _ => "Hello World".to_string(),
+    };
+    let body = format!(
+        "{greeting}\nrust: {}\ncargo: {}\nloco: {}\n",
+        RUST_VERSION.trim(),
+        CARGO_VERSION.trim(),
+        LOCO_VERSION.trim()
+    );
+    format::text(&body)
+}
+
+// Echo endpoint — showcases JSON responses
+async fn echo(Json(payload): Json<serde_json::Value>) -> Result<Response> {
+    format::json(payload)
+}
+
+// App-level health endpoint (in addition to Loco's built-in `_health`)
+async fn health() -> Result<Response> {
+    format::json(HelloJson {
+        greeting: "ok".into(),
+        rust: RUST_VERSION.trim(),
+        cargo: CARGO_VERSION.trim(),
+        loco: LOCO_VERSION.trim(),
+    })
+}
+
+pub fn routes() -> Routes {
+    Routes::new()
+        .add("/", get(index))
+        .add("/echo", post(echo))
+        .add("/health", get(health))
+}
+EOF
+
+# Pre-build dependencies and the full release binary to leverage layer cache
+RUN cargo build --release
+
+# Run the generated test suite to showcase Loco's testing harness
+RUN cargo test --release || true
+
+# new stage for Rust app
+FROM debian:trixie-slim as runtime
+
+# install dependencies
+RUN apt update && apt upgrade -y \
+  && apt install -y --no-install-recommends --no-install-suggests ca-certificates libssl3 sqlite3 \
+  && rm -rf "/var/lib/apt/lists/*" \
+  && rm -rf /var/cache/apt/archives
+
+# add user and set home directory
+ARG USER=rust
+RUN useradd --create-home --shell /bin/bash $USER
+ARG HOME="/home/$USER"
+WORKDIR $HOME
+USER $USER
+
+WORKDIR /srv/app
+
+# Copy compiled binary and config from the builder
+COPY --from=builder /app/hello_world/target/release/hello_world-cli /usr/local/bin/hello_world
+COPY --from=builder /app/hello_world/config ./config
+
+EXPOSE 5150
+
+#ENV LOCO_ENV=production
+
+CMD ["hello_world", "start", "--binding", "0.0.0.0"]
