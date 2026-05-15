@@ -1,20 +1,15 @@
 FROM debian:trixie-slim as builder
 
 ARG DEBIAN_FRONTEND=noninteractive
-ENV RUSTUP_HOME=/usr/local/rustup
-ENV CARGO_HOME=/usr/local/cargo
-ENV PATH=/usr/local/cargo/bin:$PATH
 
-# install dependencies
+# install rustup dependencies
 RUN apt update && apt upgrade -y \
-  && apt install -y --no-install-recommends --no-install-suggests ca-certificates build-essential ca-certificates curl pkg-config libssl-dev git \
+  # install dependencies
+  && apt install -y --no-install-recommends --no-install-suggests gcc libc6-dev curl ca-certificates \
+  # install rustup
+  && apt install -y --no-install-recommends --no-install-suggests rustup \
   && rm -rf "/var/lib/apt/lists/*" \
   && rm -rf /var/cache/apt/archives
-
-# Install Rust toolchain (rustup + cargo) into the shared CARGO_HOME/RUSTUP_HOME
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --no-modify-path --default-toolchain stable \
-  && chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
 # add user and set home directory
 ARG USER=rust
@@ -22,6 +17,10 @@ RUN useradd --create-home --shell /bin/bash $USER
 ARG HOME="/home/$USER"
 WORKDIR $HOME
 USER $USER
+
+ENV PATH="$HOME/.cargo/bin:$PATH"
+
+RUN rustup default stable
 
 WORKDIR /app
 
