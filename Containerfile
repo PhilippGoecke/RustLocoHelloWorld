@@ -92,11 +92,14 @@ USER $USER
 WORKDIR /srv/app
 
 # Copy compiled binary and config from the builder
-COPY --from=builder /app/hello_world/target/release/hello_world-cli /usr/local/bin/hello_world
-COPY --from=builder /app/hello_world/config ./config
+COPY --from=builder --chown=$USER:$USER /app/hello_world/target/release/hello_world-cli /usr/local/bin/hello_world
+COPY --from=builder --chown=$USER:$USER /app/hello_world/config ./config
+
+RUN cp config/development.yaml config/production.yaml \
+  && sed -i 's/binding: localhost/binding: 0.0.0.0/g' config/production.yaml
 
 EXPOSE 5150
 
-#ENV LOCO_ENV=production
+ENV LOCO_ENV=production
 
-CMD ["hello_world", "start", "--binding", "0.0.0.0"]
+CMD ["hello_world", "start"]
