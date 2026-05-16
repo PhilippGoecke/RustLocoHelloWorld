@@ -95,7 +95,7 @@ pub struct HelloJson {
     pub loco: &'static str,
 }
 
-async fn index(Query(params): Query<HelloParams>) -> Result<Response> {
+async fn hello(Query(params): Query<HelloParams>) -> Result<Response> {
     let greeting = match params.name {
         Some(name) if !name.is_empty() => format!("Hello {name}!"),
         _ => "Hello World".to_string(),
@@ -126,7 +126,7 @@ async fn health() -> Result<Response> {
 
 pub fn routes() -> Routes {
     Routes::new()
-        .add("/", get(index))
+        .add("/", get(hello))
         .add("/echo", post(echo))
         .add("/health", get(health))
 }
