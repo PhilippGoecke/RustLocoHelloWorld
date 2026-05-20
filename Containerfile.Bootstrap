@@ -147,12 +147,12 @@ COPY --from=builder --chown=$USER:$USER /app/bootstrap_example/assets ./assets
 
 RUN cp config/development.yaml config/production.yaml \
   && sed -i 's/binding: localhost/binding: 0.0.0.0/g' config/production.yaml \
-  # Disable the Fluent (i18n) initializer to avoid:
+  # Provide a minimal valid FTL resource to avoid:
   #   "failed to add FTL resources to the bundle"
   # when assets/i18n/*/main.ftl is missing or empty in the runtime image.
-  && sed -i '/^[[:space:]]*initializers:/,/^[^[:space:]]/ { /view_engine:/d; }' config/production.yaml \
-  && mkdir -p assets/i18n/en-US \
-  && : > assets/i18n/en-US/main.ftl
+  && mkdir -p assets/i18n/en-US assets/i18n/de-DE \
+  && printf 'hello = Hello\n' > assets/i18n/en-US/main.ftl \
+  && printf 'hello = Hallo\n' > assets/i18n/de-DE/main.ftl
 
 EXPOSE 5150
 
