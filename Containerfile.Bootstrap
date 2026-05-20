@@ -1,0 +1,155 @@
+FROM debian:trixie-slim as builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# install rustup dependencies
+RUN apt update && apt upgrade -y \
+  # install dependencies
+  && apt install -y --no-install-recommends --no-install-suggests gcc libc6-dev curl ca-certificates \
+  # install rustup
+  && apt install -y --no-install-recommends --no-install-suggests rustup \
+  && rm -rf "/var/lib/apt/lists/*" \
+  && rm -rf /var/cache/apt/archives
+
+# add user and set home directory
+ARG USER=rust
+RUN useradd --create-home --shell /bin/bash $USER
+ARG HOME="/home/$USER"
+WORKDIR $HOME
+USER $USER
+
+ENV PATH="$HOME/.cargo/bin:$PATH"
+
+RUN rustup default stable
+
+WORKDIR /app
+
+# Install loco and scaffold a minimal app with static assets enabled
+RUN cargo install loco \
+  && loco new --name bootstrap_example --db sqlite --bg async --assets serverside
+
+WORKDIR /app/bootstrap_example
+
+RUN cargo loco generate controller welcome --kind html index
+
+# Capture the Rust, cargo and loco versions used to build this image
+RUN rustc --version | awk '{print $2}' > /app/bootstrap_example/.rust_version \
+  && cargo --version | awk '{print $2}' > /app/bootstrap_example/.cargo_version \
+  && loco --version | awk '{print $2}' > /app/bootstrap_example/.loco_version
+
+# Download Bootstrap CSS/JS into the static assets directory
+ARG BOOTSTRAP_VERSION=5.3.3
+RUN mkdir -p assets/static/bootstrap/css assets/static/bootstrap/js \
+  && curl -fsSL "https://cdn.jsdelivr.net/npm/bootstrap@${BOOTSTRAP_VERSION}/dist/css/bootstrap.min.css" \
+       -o assets/static/bootstrap/css/bootstrap.min.css \
+  && curl -fsSL "https://cdn.jsdelivr.net/npm/bootstrap@${BOOTSTRAP_VERSION}/dist/js/bootstrap.bundle.min.js" \
+       -o assets/static/bootstrap/js/bootstrap.bundle.min.js
+
+# Replace the welcome controller with a Bootstrap-styled handler mounted at "/"
+RUN cat > src/controllers/welcome.rs <<'EOF'
+use loco_rs::prelude::*;
+use serde::Deserialize;
+
+const RUST_VERSION: &str = include_str!("../../.rust_version");
+const CARGO_VERSION: &str = include_str!("../../.cargo_version");
+const LOCO_VERSION: &str = include_str!("../../.loco_version");
+
+#[derive(Debug, Deserialize)]
+pub struct HelloParams {
+    pub name: Option<String>,
+}
+
+async fn index(Query(params): Query<HelloParams>) -> Result<Response> {
+    let greeting = match params.name {
+        Some(name) if !name.is_empty() => format!("Hello {name}!"),
+        _ => "Hello World".to_string(),
+    };
+    let body = format!(
+        r#"<!doctype html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{greeting}</title>
+  <link rel="stylesheet" href="/static/bootstrap/css/bootstrap.min.css">
+</head>
+<body class="bg-body">
+  <nav class="navbar navbar-expand-lg bg-primary" data-bs-theme="dark">
+    <div class="container">
+      <a class="navbar-brand" href="/">Loco + Bootstrap</a>
+    </div>
+  </nav>
+  <main class="container py-5">
+    <div class="p-5 mb-4 bg-body-tertiary rounded-3 shadow-sm">
+      <div class="container-fluid py-3">
+        <h1 class="display-4 fw-bold">{greeting}</h1>
+        <p class="lead">A minimal Loco web app styled with Bootstrap.</p>
+        <hr class="my-4">
+        <form class="row g-2" method="get" action="/">
+          <div class="col-auto">
+            <label for="name" class="col-form-label">Your name</label>
+          </div>
+          <div class="col-auto">
+            <input type="text" class="form-control" id="name" name="name" placeholder="World">
+          </div>
+          <div class="col-auto">
+            <button type="submit" class="btn btn-primary">Greet me</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    <div class="row g-3">
+      <div class="col-md-4"><div class="card h-100"><div class="card-body"><h5 class="card-title">rust</h5><p class="card-text font-monospace">{}</p></div></div></div>
+      <div class="col-md-4"><div class="card h-100"><div class="card-body"><h5 class="card-title">cargo</h5><p class="card-text font-monospace">{}</p></div></div></div>
+      <div class="col-md-4"><div class="card h-100"><div class="card-body"><h5 class="card-title">loco</h5><p class="card-text font-monospace">{}</p></div></div></div>
+    </div>
+  </main>
+  <script src="/static/bootstrap/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>"#,
+        RUST_VERSION.trim(),
+        CARGO_VERSION.trim(),
+        LOCO_VERSION.trim()
+    );
+    format::html(&body)
+}
+
+pub fn routes() -> Routes {
+    Routes::new().add("/", get(index))
+}
+EOF
+
+# Pre-build dependencies to leverage Docker layer cache
+RUN cargo build --release
+
+# new stage for Rust app
+FROM debian:trixie-slim as runtime
+
+# install dependencies
+RUN apt update && apt upgrade -y \
+  && apt install -y --no-install-recommends --no-install-suggests ca-certificates libssl3 sqlite3 \
+  && rm -rf "/var/lib/apt/lists/*" \
+  && rm -rf /var/cache/apt/archives
+
+# add user and set home directory
+ARG USER=rust
+RUN useradd --create-home --shell /bin/bash $USER
+ARG HOME="/home/$USER"
+WORKDIR $HOME
+USER $USER
+
+WORKDIR /srv/app
+
+# Copy compiled binary, config and static assets (including Bootstrap) from the builder
+COPY --from=builder --chown=$USER:$USER /app/bootstrap_example/target/release/bootstrap_example-cli /usr/local/bin/bootstrap_example
+COPY --from=builder --chown=$USER:$USER /app/bootstrap_example/config ./config
+COPY --from=builder --chown=$USER:$USER /app/bootstrap_example/assets ./assets
+
+RUN cp config/development.yaml config/production.yaml \
+  && sed -i 's/binding: localhost/binding: 0.0.0.0/g' config/production.yaml
+
+EXPOSE 5150
+
+ENV LOCO_ENV=production
+
+CMD ["bootstrap_example", "start"]
