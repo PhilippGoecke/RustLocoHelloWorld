@@ -32,6 +32,12 @@ WORKDIR /app/bootstrap_example
 
 RUN cargo loco generate controller welcome --kind html index
 
+# Provide minimal valid FTL resources so the i18n bundle loads successfully.
+# Without these, startup fails with: "failed to add FTL resources to the bundle"
+RUN mkdir -p assets/i18n/en-US assets/i18n/de-DE \
+  && printf 'hello = Hello\n' > assets/i18n/en-US/main.ftl \
+  && printf 'hello = Hallo\n' > assets/i18n/de-DE/main.ftl
+
 # Capture the Rust, cargo and loco versions used to build this image
 RUN rustc --version | awk '{print $2}' > /app/bootstrap_example/.rust_version \
   && cargo --version | awk '{print $2}' > /app/bootstrap_example/.cargo_version \
