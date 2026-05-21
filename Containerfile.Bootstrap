@@ -33,10 +33,15 @@ WORKDIR /app/bootstrap_example
 RUN cargo loco generate controller welcome --kind html index
 
 # Provide minimal valid FTL resources so the i18n bundle loads successfully.
-# Without these, startup fails with: "failed to add FTL resources to the bundle"
-RUN mkdir -p assets/i18n/en-US assets/i18n/de-DE \
+# Without these (or with duplicate/invalid messages), startup fails with:
+#   "failed to add FTL resources to the bundle"
+# We wipe any scaffolded i18n files first to guarantee a single, valid resource
+# per locale with no duplicate message IDs.
+RUN rm -rf assets/i18n \
+  && mkdir -p assets/i18n/en-US assets/i18n/de-DE assets/i18n/shared \
   && printf 'hello = Hello\n' > assets/i18n/en-US/main.ftl \
-  && printf 'hello = Hallo\n' > assets/i18n/de-DE/main.ftl
+  && printf 'hello = Hallo\n' > assets/i18n/de-DE/main.ftl \
+  && : > assets/i18n/shared/main.ftl
 
 # Capture the Rust, cargo and loco versions used to build this image
 RUN rustc --version | awk '{print $2}' > /app/bootstrap_example/.rust_version \
@@ -155,10 +160,13 @@ RUN cp config/development.yaml config/production.yaml \
   && sed -i 's/binding: localhost/binding: 0.0.0.0/g' config/production.yaml \
   # Provide a minimal valid FTL resource to avoid:
   #   "failed to add FTL resources to the bundle"
-  # when assets/i18n/*/main.ftl is missing or empty in the runtime image.
-  && mkdir -p assets/i18n/en-US assets/i18n/de-DE \
+  # Wipe any copied i18n files first to avoid duplicate message IDs across
+  # multiple .ftl files in the same locale directory.
+  && rm -rf assets/i18n \
+  && mkdir -p assets/i18n/en-US assets/i18n/de-DE assets/i18n/shared \
   && printf 'hello = Hello\n' > assets/i18n/en-US/main.ftl \
-  && printf 'hello = Hallo\n' > assets/i18n/de-DE/main.ftl
+  && printf 'hello = Hallo\n' > assets/i18n/de-DE/main.ftl \
+  && : > assets/i18n/shared/main.ftl
 
 EXPOSE 5150
 
