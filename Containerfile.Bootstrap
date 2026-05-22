@@ -38,10 +38,10 @@ RUN cargo loco generate controller welcome --kind html index
 # We wipe any scaffolded i18n files first to guarantee a single, valid resource
 # per locale with no duplicate message IDs.
 RUN rm -rf assets/i18n \
-  && mkdir -p assets/i18n/en-US assets/i18n/de-DE assets/i18n/shared \
+  && mkdir -p assets/i18n/en-US assets/i18n/de-DE \
   && printf 'hello = Hello\n' > assets/i18n/en-US/main.ftl \
   && printf 'hello = Hallo\n' > assets/i18n/de-DE/main.ftl \
-  && : > assets/i18n/shared/main.ftl
+  && : > assets/i18n/shared.ftl
 
 # Capture the Rust, cargo and loco versions used to build this image
 RUN rustc --version | awk '{print $2}' > /app/bootstrap_example/.rust_version \
@@ -163,10 +163,10 @@ RUN cp config/development.yaml config/production.yaml \
   # Wipe any copied i18n files first to avoid duplicate message IDs across
   # multiple .ftl files in the same locale directory.
   && rm -rf assets/i18n \
-  && mkdir -p assets/i18n/en-US assets/i18n/de-DE assets/i18n/shared \
+  && mkdir -p assets/i18n/en-US assets/i18n/de-DE \
   && printf 'hello = Hello\n' > assets/i18n/en-US/main.ftl \
   && printf 'hello = Hallo\n' > assets/i18n/de-DE/main.ftl \
-  && : > assets/i18n/shared/main.ftl
+  && : > assets/i18n/shared.ftl
 
 EXPOSE 5150
 
