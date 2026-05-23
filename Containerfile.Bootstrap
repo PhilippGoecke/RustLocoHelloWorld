@@ -32,16 +32,22 @@ WORKDIR /app/bootstrap_example
 
 RUN cargo loco generate controller welcome --kind html index
 
+# Create the welcome/index view template
+RUN mkdir -p src/views/welcome \
+  && cat > src/views/welcome/index.html.tera <<'TEMPLATE'
+<!-- Welcome index template -->
+TEMPLATE
+
 # Provide minimal valid FTL resources so the i18n bundle loads successfully.
 # Without these (or with duplicate/invalid messages), startup fails with:
 #   "failed to add FTL resources to the bundle"
 # We wipe any scaffolded i18n files first to guarantee a single, valid resource
 # per locale with no duplicate message IDs.
 RUN rm -rf assets/i18n \
-  && mkdir -p assets/i18n/en-US assets/i18n/de-DE \
+  && mkdir -p assets/i18n/en-US assets/i18n/de-DE assets/i18n/shared \
   && printf 'hello = Hello\n' > assets/i18n/en-US/main.ftl \
   && printf 'hello = Hallo\n' > assets/i18n/de-DE/main.ftl \
-  && : > assets/i18n/shared.ftl
+  && : > assets/i18n/shared/main.ftl
 
 # Capture the Rust, cargo and loco versions used to build this image
 RUN rustc --version | awk '{print $2}' > /app/bootstrap_example/.rust_version \
@@ -70,11 +76,10 @@ pub struct HelloParams {
     pub name: Option<String>,
 }
 
-async fn index(Query(params): Query<HelloParams>) -> Result<Response> {
-    let greeting = match params.name {
-        Some(name) if !name.is_empty() => format!("Hello {name}!"),
-        _ => "Hello World".to_string(),
-    };
+async fn index(Query(params): Query<HelloParams>, ViewEngine(views): ViewEngine) -> Result<Response> {
+    let name = params.name.unwrap_or_else(|| "World".to_string());
+    let greeting = format!("Hello, {}", name);
+    let body = views.render("welcome/index", &serde_json::json!({ "greeting": greeting }))?;
     let body = format!(
         r#"<!doctype html>
 <html lang="en" data-bs-theme="dark">
@@ -163,10 +168,10 @@ RUN cp config/development.yaml config/production.yaml \
   # Wipe any copied i18n files first to avoid duplicate message IDs across
   # multiple .ftl files in the same locale directory.
   && rm -rf assets/i18n \
-  && mkdir -p assets/i18n/en-US assets/i18n/de-DE \
+  && mkdir -p assets/i18n/en-US assets/i18n/de-DE assets/i18n/shared \
   && printf 'hello = Hello\n' > assets/i18n/en-US/main.ftl \
   && printf 'hello = Hallo\n' > assets/i18n/de-DE/main.ftl \
-  && : > assets/i18n/shared.ftl
+  && : > assets/i18n/shared/main.ftl
 
 EXPOSE 5150
 
