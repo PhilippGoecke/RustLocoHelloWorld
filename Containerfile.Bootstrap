@@ -76,7 +76,7 @@ pub struct HelloParams {
     pub name: Option<String>,
 }
 
-async fn index(Query(params): Query<HelloParams>, ViewEngine(views): ViewEngine) -> Result<Response> {
+async fn index(Query(params): Query<HelloParams>, ViewEngine(views): ViewEngine) -> Result<Response, Error> {
     let name = params.name.unwrap_or_else(|| "World".to_string());
     let greeting = format!("Hello, {}", name);
     let body = views.render("welcome/index", &serde_json::json!({ "greeting": greeting }))?;
