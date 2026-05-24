@@ -76,9 +76,9 @@ pub struct HelloParams {
     pub name: Option<String>,
 }
 
-pub struct E;
+use crate::views;
 
-async fn index(Query(params): Query<HelloParams>, ViewEngine(views): ViewEngine<E>) -> Result<Response, Error> {
+async fn index(Query(params): Query<HelloParams>, ViewEngine(views): ViewEngine<TeraView>) -> Result<Response, Error> {
     let name = params.name.unwrap_or_else(|| "World".to_string());
     let greeting = format!("Hello, {}", name);
     let body = views.render("welcome/index", &serde_json::json!({ "greeting": greeting }))?;
