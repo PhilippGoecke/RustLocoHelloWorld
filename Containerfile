@@ -21,7 +21,7 @@ USER $USER
 ENV PATH="$HOME/.cargo/bin:$PATH"
 
 RUN rustup update \
-  && rustup self update \
+  # && rustup self update \
   && rustup default stable \
   && rustc --version
 
