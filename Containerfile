@@ -28,8 +28,8 @@ RUN rustup update \
 WORKDIR /app
 
 # Install the loco and scaffold a minimal "hello world" app
-RUN cargo install loco \
-  && cargo install sea-orm-cli \ # for DB
+RUN cargo install loco --locked \
+  && cargo install sea-orm-cli --locked \
   && loco new --name hello_world --db sqlite --bg async --assets none
 
 WORKDIR /app/hello_world
