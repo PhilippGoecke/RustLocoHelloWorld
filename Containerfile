@@ -20,7 +20,10 @@ USER $USER
 
 ENV PATH="$HOME/.cargo/bin:$PATH"
 
-RUN rustup default stable
+RUN rustup update \
+  && rustup self update \
+  && rustup default stable \
+  && rustc --version
 
 WORKDIR /app
 
