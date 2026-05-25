@@ -51,7 +51,7 @@ RUN rm -rf assets/i18n \
   && mkdir -p assets/i18n/en-US assets/i18n/de-DE assets/i18n/shared \
   && printf 'hello = Hello\n' > assets/i18n/en-US/main.ftl \
   && printf 'hello = Hallo\n' > assets/i18n/de-DE/main.ftl \
-  && : > assets/i18n/shared/main.ftl
+  && : > assets/i18n/shared.ftl
 
 # Capture the Rust, cargo and loco versions used to build this image
 RUN rustc --version | awk '{print $2}' > /app/bootstrap_example/.rust_version \
@@ -167,16 +167,7 @@ COPY --from=builder --chown=$USER:$USER /app/bootstrap_example/config ./config
 COPY --from=builder --chown=$USER:$USER /app/bootstrap_example/assets ./assets
 
 RUN cp config/development.yaml config/production.yaml \
-  && sed -i 's/binding: localhost/binding: 0.0.0.0/g' config/production.yaml \
-  # Provide a minimal valid FTL resource to avoid:
-  #   "failed to add FTL resources to the bundle"
-  # Wipe any copied i18n files first to avoid duplicate message IDs across
-  # multiple .ftl files in the same locale directory.
-  && rm -rf assets/i18n \
-  && mkdir -p assets/i18n/en-US assets/i18n/de-DE assets/i18n/shared \
-  && printf 'hello = Hello\n' > assets/i18n/en-US/main.ftl \
-  && printf 'hello = Hallo\n' > assets/i18n/de-DE/main.ftl \
-  && : > assets/i18n/shared/main.ftl
+  && sed -i 's/binding: localhost/binding: 0.0.0.0/g' config/production.yaml
 
 EXPOSE 5150
 
