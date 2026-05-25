@@ -5,7 +5,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # install rustup dependencies
 RUN apt update && apt upgrade -y \
   # install dependencies
-  && apt install -y --no-install-recommends --no-install-suggests gcc libc6-dev curl ca-certificates \
+  && apt install -y --no-install-recommends --no-install-suggests gcc libc6-dev curl ca-certificates pkg-config libssl-dev \
   # install rustup
   && apt install -y --no-install-recommends --no-install-suggests rustup \
   && rm -rf "/var/lib/apt/lists/*" \
