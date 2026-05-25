@@ -29,6 +29,7 @@ WORKDIR /app
 
 # Install the loco and scaffold a minimal "hello world" app
 RUN cargo install loco \
+  && cargo install sea-orm-cli \ # for DB
   && loco new --name hello_world --db sqlite --bg async --assets none
 
 WORKDIR /app/hello_world
@@ -72,6 +73,8 @@ pub fn routes() -> Routes {
     Routes::new().add("/", get(index))
 }
 EOF
+
+# RUN cargo loco start
 
 # Pre-build dependencies to leverage Docker layer cache
 RUN cargo build --release
