@@ -5,7 +5,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # install rustup dependencies
 RUN apt update && apt upgrade -y \
   # install dependencies
-  && apt install -y --no-install-recommends --no-install-suggests gcc libc6-dev curl ca-certificates \
+  && apt install -y --no-install-recommends --no-install-suggests gcc libc6-dev curl ca-certificates pkg-config libssl-dev \
   # install rustup
   && apt install -y --no-install-recommends --no-install-suggests rustup \
   && rm -rf "/var/lib/apt/lists/*" \
@@ -20,12 +20,16 @@ USER $USER
 
 ENV PATH="$HOME/.cargo/bin:$PATH"
 
-RUN rustup default stable
+RUN rustup update \
+  # && rustup self update \
+  && rustup default stable \
+  && rustc --version
 
 WORKDIR /app
 
 # Install loco and scaffold a minimal app with static assets enabled
-RUN cargo install loco \
+RUN cargo install loco --locked \
+  && cargo install sea-orm-cli --locked \
   && loco new --name bootstrap_example --db sqlite --bg async --assets serverside
 
 WORKDIR /app/bootstrap_example
@@ -133,6 +137,8 @@ pub fn routes() -> Routes {
     Routes::new().add("/", get(index))
 }
 EOF
+
+# RUN cargo loco start
 
 # Pre-build dependencies to leverage Docker layer cache
 RUN cargo build --release
