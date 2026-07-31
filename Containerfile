@@ -34,7 +34,7 @@ RUN cargo install loco --locked \
 
 WORKDIR /app/hello_world
 
-RUN cargo loco generate controller welcome --kind api index
+RUN cargo loco generate controller welcome -- --kind api index
 
 # Capture the Rust, cargo and loco versions used to build this image
 RUN rustc --version | awk '{print $2}' > /app/hello_world/.rust_version \
