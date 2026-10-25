@@ -108,6 +108,7 @@ ENV RUST_LOG=info
 ENV SERVER_BINDING=0.0.0.0
 ENV SERVER_HOST=http://localhost
 ENV HOST=http://localhost
+ENV MAILER_HOST=localhost
 ENV PORT=5150
 ENV DATABASE_URL="sqlite:///srv/app/hello_world_prod.sqlite?mode=rwc"
 
