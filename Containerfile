@@ -104,6 +104,11 @@ COPY --from=builder --chown=$USER:$USER /app/hello_world/config ./config
 EXPOSE 5150
 
 ENV LOCO_ENV=production
-ENV BINDING=0.0.0.0
+ENV RUST_LOG=info
+ENV SERVER_BINDING=0.0.0.0
+ENV SERVER_HOST=http://localhost
+ENV PORT=5150
+ENV DATABASE_URL="sqlite:///srv/app/hello_world_prod.sqlite?mode=rwc"
 
+ENTRYPOINT ["sh", "-c", "export JWT_SECRET=\"${JWT_SECRET:-$(od -An -N32 -tx1 /dev/urandom | tr -d ' \\n')}\"; exec \"$@\"", "--"]
 CMD ["hello_world", "start"]
