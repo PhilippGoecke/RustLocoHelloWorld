@@ -1,0 +1,362 @@
+# change this dockerfile to implement a File Explorer like App to Browse,Create,Delete,Upload and Download Directories and Files
+# GPT 6.1-sol
+FROM debian:trixie-slim as builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# install rustup dependencies
+RUN apt update && apt upgrade -y \
+  # install dependencies
+  && apt install -y --no-install-recommends --no-install-suggests gcc libc6-dev curl ca-certificates pkg-config libssl-dev \
+  # install rustup
+  && apt install -y --no-install-recommends --no-install-suggests rustup \
+  && rm -rf "/var/lib/apt/lists/*" \
+  && rm -rf /var/cache/apt/archives
+
+# add user and set home directory
+ARG USER=rust
+RUN useradd --create-home --shell /bin/bash $USER
+RUN mkdir -p /app && chown "$USER:$USER" /app
+ARG HOME="/home/$USER"
+WORKDIR $HOME
+USER $USER
+
+ENV PATH="$HOME/.cargo/bin:$PATH"
+
+RUN rustup update \
+  # && rustup self update \
+  && rustup default stable \
+  && rustc --version
+
+WORKDIR /app
+
+# Install the loco and scaffold a minimal "hello world" app
+RUN cargo install loco --locked \
+  && cargo install sea-orm-cli --locked \
+  && loco new --name hello_world --db sqlite --bg async --assets none
+
+WORKDIR /app/hello_world
+
+RUN cargo loco generate controller welcome -- --kind api index
+
+# Capture the Rust, cargo and loco versions used to build this image
+RUN rustc --version | awk '{print $2}' > /app/hello_world/.rust_version \
+  && cargo --version | awk '{print $2}' > /app/hello_world/.cargo_version \
+  && loco --version | awk '{print $2}' > /app/hello_world/.loco_version
+
+# File explorer: all filesystem access is restricted to FILE_ROOT.
+RUN cat > src/controllers/welcome.rs <<'EOF'
+use axum::{
+  body::Bytes,
+  extract::{DefaultBodyLimit, Query},
+  http::{header, StatusCode},
+  response::{Html, IntoResponse, Response},
+  routing::{get, post},
+  Json,
+};
+use loco_rs::prelude::Routes;
+use serde::{Deserialize, Serialize};
+use std::{fs, io, path::{Component, Path, PathBuf}, process::Command};
+
+type ApiResult = std::result::Result<Response, (StatusCode, String)>;
+
+#[derive(Deserialize)]
+pub struct Location {
+  #[serde(default)]
+  path: String,
+}
+
+#[derive(Deserialize)]
+pub struct Create {
+  path: String,
+  directory: bool,
+}
+
+#[derive(Serialize)]
+struct Entry {
+  name: String,
+  directory: bool,
+  size: u64,
+}
+
+fn failure(error: io::Error) -> (StatusCode, String) {
+  let status = match error.kind() {
+    io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+    io::ErrorKind::AlreadyExists => StatusCode::CONFLICT,
+    io::ErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
+    io::ErrorKind::InvalidInput => StatusCode::BAD_REQUEST,
+    _ => StatusCode::INTERNAL_SERVER_ERROR,
+  };
+  (status, error.to_string())
+}
+
+fn invalid(message: &str) -> (StatusCode, String) {
+  (StatusCode::BAD_REQUEST, message.to_owned())
+}
+
+// Reject traversal and symlinks, including symlinks in ancestor directories.
+// FILE_ROOT must not be writable by other processes or untrusted host users.
+fn resolve(relative: &str, allow_root: bool) -> std::result::Result<PathBuf, (StatusCode, String)> {
+  let root = PathBuf::from(std::env::var("FILE_ROOT").unwrap_or_else(|_| "/srv/app/files".into()));
+  fs::create_dir_all(&root).map_err(failure)?;
+  let root = fs::canonicalize(root).map_err(failure)?;
+  let mut target = root.clone();
+  for component in Path::new(relative).components() {
+    match component {
+      Component::Normal(name) => target.push(name),
+      _ => return Err(invalid("Only relative paths without traversal are allowed")),
+    }
+    match fs::symlink_metadata(&target) {
+      Ok(metadata) if metadata.file_type().is_symlink() => return Err(invalid("Symlinks are not supported")),
+      Ok(_) => {},
+      Err(error) if error.kind() == io::ErrorKind::NotFound => {},
+      Err(error) => return Err(failure(error)),
+    }
+  }
+  if !allow_root && target == root {
+    return Err(invalid("The storage root cannot be modified"));
+  }
+  Ok(target)
+}
+
+async fn index() -> Html<&'static str> {
+  Html(include_str!("welcome.html"))
+}
+
+async fn list(Query(location): Query<Location>) -> ApiResult {
+  let directory = resolve(&location.path, true)?;
+  let mut entries = Vec::new();
+  for entry in fs::read_dir(directory).map_err(failure)? {
+    let entry = entry.map_err(failure)?;
+    let metadata = fs::symlink_metadata(entry.path()).map_err(failure)?;
+    if !metadata.is_file() && !metadata.is_dir() { continue; }
+    let Ok(name) = entry.file_name().into_string() else { continue; };
+    entries.push(Entry { name, directory: metadata.is_dir(), size: metadata.len() });
+  }
+  entries.sort_by(|a, b| b.directory.cmp(&a.directory).then_with(|| a.name.cmp(&b.name)));
+  Ok(Json(entries).into_response())
+}
+
+async fn create(Json(request): Json<Create>) -> ApiResult {
+  let path = resolve(&request.path, false)?;
+  if request.directory {
+    fs::create_dir(path).map_err(failure)?;
+  } else {
+    fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(failure)?;
+  }
+  Ok(StatusCode::CREATED.into_response())
+}
+
+async fn remove(Query(location): Query<Location>) -> ApiResult {
+  let path = resolve(&location.path, false)?;
+  if fs::symlink_metadata(&path).map_err(failure)?.is_dir() {
+    fs::remove_dir_all(path).map_err(failure)?;
+  } else {
+    fs::remove_file(path).map_err(failure)?;
+  }
+  Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+// Raw request bodies avoid requiring multipart dependencies; uploads never overwrite.
+async fn upload(Query(location): Query<Location>, body: Bytes) -> ApiResult {
+  use std::io::Write;
+  let path = resolve(&location.path, false)?;
+  let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(failure)?;
+  if let Err(error) = file.write_all(&body) {
+    drop(file);
+    let _ = fs::remove_file(path);
+    return Err(failure(error));
+  }
+  Ok(StatusCode::CREATED.into_response())
+}
+
+async fn download(Query(location): Query<Location>) -> ApiResult {
+  let path = resolve(&location.path, true)?;
+  let metadata = fs::metadata(&path).map_err(failure)?;
+  let (data, content_type, extension) = if metadata.is_dir() {
+    // tar does not follow symlinks, and -- prevents option injection.
+    let output = Command::new("tar").arg("-czf").arg("-")
+      .arg("-C").arg(&path).arg("--").arg(".").output().map_err(failure)?;
+    if !output.status.success() {
+      return Err((StatusCode::INTERNAL_SERVER_ERROR, "Unable to archive directory".into()));
+    }
+    (output.stdout, "application/gzip", ".tar.gz")
+  } else if metadata.is_file() {
+    (fs::read(&path).map_err(failure)?, "application/octet-stream", "")
+  } else {
+    return Err(invalid("Not a regular file or directory"));
+  };
+  let name: String = path.file_name().unwrap_or_default().to_string_lossy().chars()
+    .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' }).collect();
+  Ok(([
+    (header::CONTENT_TYPE, content_type.to_owned()),
+    (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}{extension}\"")),
+    (header::X_CONTENT_TYPE_OPTIONS, "nosniff".into()),
+  ], data).into_response())
+}
+
+pub fn routes() -> Routes {
+  Routes::new()
+    .add("/", get(index))
+    .add("/api/files", get(list).delete(remove))
+    .add("/api/create", post(create))
+    .add("/api/upload", post(upload).layer(DefaultBodyLimit::max(100 * 1024 * 1024)))
+    .add("/api/download", get(download))
+}
+EOF
+
+RUN cat > src/controllers/welcome.html <<'EOF'
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Loco File Explorer</title>
+<style>
+body{font:16px system-ui;max-width:1000px;margin:2rem auto;padding:0 1rem;background:#f5f7fa;color:#172033}
+button,a,input{font:inherit}button,a{cursor:pointer}button{margin:.2rem;padding:.4rem .7rem}
+table{width:100%;border-collapse:collapse;background:white}th,td{padding:.8rem;text-align:left;border-bottom:1px solid #ddd}
+nav{overflow-wrap:anywhere;margin:1rem 0}#status{min-height:1.5rem;color:#a21b1b}small{color:#555}
+</style>
+<h1>Loco File Explorer</h1>
+<small>Files stay inside the storage directory. Directory downloads are .tar.gz archives. Upload limit: 100 MiB per file.</small>
+<nav><button id="up">↑ Parent</button> <strong id="path">/</strong></nav>
+<div>
+<button id="new-folder">New folder</button><button id="new-file">New file</button>
+<button id="upload-files">Upload files</button><input id="files" type="file" multiple hidden>
+<button id="upload-folder">Upload folder</button><input id="folder" type="file" webkitdirectory multiple hidden>
+<button id="download">Download directory</button><button id="refresh">Refresh</button>
+</div>
+<p id="status" role="status" aria-live="polite"></p>
+<table><thead><tr><th>Name</th><th>Size</th><th>Actions</th></tr></thead><tbody id="entries"></tbody></table>
+<script>
+let current = '';
+const $ = id => document.getElementById(id);
+const join = (base, name) => base ? `${base}/${name}` : name;
+const endpoint = (route, path) => `${route}?${new URLSearchParams({path})}`;
+async function request(url, options) {
+  const response = await fetch(url, options);
+  if (!response.ok) throw new Error(await response.text() || response.statusText);
+  return response;
+}
+async function action(callback) {
+  $('status').textContent = '';
+  try { await callback(); } catch (error) { $('status').textContent = error.message; }
+}
+function button(label, callback) {
+  const node = document.createElement('button');
+  node.textContent = label;
+  node.onclick = () => action(callback);
+  return node;
+}
+function download(path) { window.location.assign(endpoint('/api/download', path)); }
+async function browse(path = current) {
+  const entries = await (await request(endpoint('/api/files', path))).json();
+  current = path;
+  $('path').textContent = '/' + current;
+  $('up').disabled = !current;
+  $('entries').replaceChildren();
+  for (const entry of entries) {
+  const target = join(current, entry.name);
+  const row = document.createElement('tr');
+  const name = document.createElement('td');
+  if (entry.directory) name.append(button('📁 ' + entry.name, () => browse(target)));
+  else name.textContent = '📄 ' + entry.name;
+  const size = document.createElement('td');
+  size.textContent = entry.directory ? '—' : `${entry.size.toLocaleString()} bytes`;
+  const actions = document.createElement('td');
+  actions.append(button('Download', () => download(target)), button('Delete', async () => {
+    if (!confirm(`Delete "${entry.name}"${entry.directory ? ' and all its contents' : ''}?`)) return;
+    await request(endpoint('/api/files', target), {method: 'DELETE'});
+    await browse();
+  }));
+  row.append(name, size, actions);
+  $('entries').append(row);
+  }
+}
+async function create(directory) {
+  const name = prompt(directory ? 'Folder name' : 'File name');
+  if (name === null) return;
+  if (!name || name === '.' || name === '..' || /[/\\]/.test(name)) throw new Error('Enter a single file or folder name.');
+  await request('/api/create', {method: 'POST', headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({path: join(current, name), directory})});
+  await browse();
+}
+async function upload(input) {
+  const base = current;
+  const directories = new Set();
+  try {
+  for (const file of input.files) {
+    if (file.size > 100 * 1024 * 1024) throw new Error(`${file.name} exceeds 100 MiB.`);
+    const relative = file.webkitRelativePath || file.name;
+    const parts = relative.split('/');
+    for (let i = 1; i < parts.length; i++) {
+    const path = join(base, parts.slice(0, i).join('/'));
+    if (directories.has(path)) continue;
+    const response = await fetch('/api/create', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path, directory: true})});
+    if (!response.ok && response.status !== 409) throw new Error(await response.text());
+    directories.add(path);
+    }
+    $('status').textContent = `Uploading ${relative}…`;
+    await request(endpoint('/api/upload', join(base, relative)), {method: 'POST', body: file});
+  }
+  $('status').textContent = 'Upload complete.';
+  } finally {
+  input.value = '';
+  await browse();
+  }
+}
+$('up').onclick = () => action(() => browse(current.split('/').slice(0, -1).join('/')));
+$('refresh').onclick = () => action(() => browse());
+$('new-folder').onclick = () => action(() => create(true));
+$('new-file').onclick = () => action(() => create(false));
+$('download').onclick = () => download(current);
+$('upload-files').onclick = () => $('files').click();
+$('upload-folder').onclick = () => $('folder').click();
+for (const id of ['files', 'folder']) $(id).onchange = () => action(() => upload($(id)));
+action(() => browse());
+</script>
+</html>
+EOF
+
+# RUN cargo loco start
+
+# Pre-build dependencies to leverage Docker layer cache
+RUN cargo build --release
+
+# new stage for Rust app
+FROM debian:trixie-slim as runtime
+
+# install dependencies
+RUN apt update && apt upgrade -y \
+  && apt install -y --no-install-recommends --no-install-suggests ca-certificates libssl3 sqlite3 tar gzip \
+  && rm -rf "/var/lib/apt/lists/*" \
+  && rm -rf /var/cache/apt/archives
+
+# add user and set home directory
+ARG USER=rust
+RUN useradd --create-home --shell /bin/bash $USER
+ARG HOME="/home/$USER"
+WORKDIR $HOME
+USER $USER
+
+WORKDIR /srv/app
+
+# Copy compiled binary and config from the builder
+COPY --from=builder --chown=$USER:$USER /app/hello_world/target/release/hello_world-cli /usr/local/bin/hello_world
+COPY --from=builder --chown=$USER:$USER /app/hello_world/config ./config
+
+RUN mkdir -p /srv/app/files \
+  && cp config/development.yaml config/production.yaml \
+  && sed -i 's/binding: localhost/binding: 0.0.0.0/g' config/production.yaml
+
+EXPOSE 5150
+
+ENV LOCO_ENV=production
+ENV FILE_ROOT=/srv/app/files
+
+# Persist files with a named volume. This app has no authentication: expose only
+# on a trusted network or behind an authenticated reverse proxy.
+VOLUME ["/srv/app/files"]
+
+CMD ["hello_world", "start"]
