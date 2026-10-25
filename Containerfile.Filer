@@ -346,17 +346,23 @@ WORKDIR /srv/app
 COPY --from=builder --chown=$USER:$USER /app/hello_world/target/release/hello_world-cli /usr/local/bin/hello_world
 COPY --from=builder --chown=$USER:$USER /app/hello_world/config ./config
 
-RUN mkdir -p /srv/app/files \
-  && cp config/development.yaml config/production.yaml \
-  && sed -i 's/binding: localhost/binding: 0.0.0.0/g' config/production.yaml
+RUN mkdir -p /srv/app/files
 
 EXPOSE 5150
 
 ENV LOCO_ENV=production
 ENV FILE_ROOT=/srv/app/files
+ENV RUST_LOG=info
+ENV SERVER_BINDING=0.0.0.0
+ENV SERVER_HOST=http://localhost
+ENV HOST=http://localhost
+ENV MAILER_HOST=localhost
+ENV PORT=5150
+ENV DATABASE_URL="sqlite:///srv/app/hello_world_prod.sqlite?mode=rwc"
 
 # Persist files with a named volume. This app has no authentication: expose only
 # on a trusted network or behind an authenticated reverse proxy.
 VOLUME ["/srv/app/files"]
 
+ENTRYPOINT ["sh", "-c", "export JWT_SECRET=\"${JWT_SECRET:-$(od -An -N32 -tx1 /dev/urandom | tr -d ' \\n')}\"; exec \"$@\"", "--"]
 CMD ["hello_world", "start"]
